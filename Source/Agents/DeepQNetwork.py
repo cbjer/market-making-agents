@@ -8,14 +8,14 @@ from Source.Agents.Utils.ExperienceReplay import ExperienceReplay
 import torch
 import numpy as np
 
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.0005
 WEIGHT_TRANSFER_INTERVALS = 1000
-EXPERIENCE_REPLAY_SIZE = 1000
-EPSILON_START = 0.99
-EPSILON_ALPHA = 0.9999
-EPSILON_MINIMUM = 0.05
+EXPERIENCE_REPLAY_SIZE = 5000
+EPSILON_START = 0.5
+EPSILON_ALPHA = 0.999
+EPSILON_MINIMUM = 0.01
 BATCH_SIZE = 128
-GAMMA = 0.99
+GAMMA = 0.95
 
 class Net(torch.nn.Module):
     """
@@ -27,22 +27,33 @@ class Net(torch.nn.Module):
         self.inputSpaceSize = inputSpaceSize
         self.outputSpaceSize = outputSpaceSize
 
-        self.createNetwork()
+        # self.createNetwork()
+        self.createSequentialNetwork()
 
     def createNetwork(self):
         self.inputLayer = torch.nn.Linear(self.inputSpaceSize, 128) # Can add weight initialisation later
-        self.fullConnected1 = torch.nn.Linear(128, 256)
-        self.fullConnected2 = torch.nn.Linear(256, 64)
-        self.outputLayer = torch.nn.Linear(64, self.outputSpaceSize)
+        self.fullConnected1 = torch.nn.Linear(128, 128)
+        self.outputLayer = torch.nn.Linear(128, self.outputSpaceSize)
+
+    def createSequentialNetwork(self):
+        hiddenNodes = 128
+        self.networkArchitecture = torch.nn.Sequential(
+                torch.nn.Linear(self.inputSpaceSize, hiddenNodes),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hiddenNodes, hiddenNodes),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hiddenNodes, self.outputSpaceSize)
+                )
 
     def forward(self, x):
+        """
         x = self.inputLayer(x)
         x = torch.nn.functional.relu(x)
         x = self.fullConnected1(x)
         x = torch.nn.functional.relu(x)
-        x = self.fullConnected2(x)
-        x = torch.nn.functional.relu(x)
         output = self.outputLayer(x)
+        """
+        output = self.networkArchitecture(x)
         return output
 
 class DeepQNetwork:
@@ -64,7 +75,7 @@ class DeepQNetwork:
         self._lossFunction = torch.nn.MSELoss()
 
     def sampleEpsilonGreedyActionIndex(self, state):
-        if np.random.rand() < self._epsilon:
+        if np.random.random() < self._epsilon:
             return self._sampleRandomActionIndex()
         else:
             return self.sampleGreedyActionIndex(state)
@@ -90,6 +101,7 @@ class DeepQNetwork:
             return
 
         if self._learnCounter % self._weightsTransferIntervals == 0:
+            self._learnCounter = 1
             self._copyEvalautionWeightsToTarget()
 
         self._learnCounter += 1
@@ -100,7 +112,13 @@ class DeepQNetwork:
         qActionValues = self._evaluationNet(states).gather(1, actionIndexes)
         nextStateQValues = self._targetNet(nextStates).detach()
         nextStateMaxActionValue = nextStateQValues.max(1)[0].view(batchSize, 1)
-        qTarget = rewards + (1 - dones) * GAMMA * nextStateMaxActionValue
+
+        assert nextStateMaxActionValue.shape == rewards.shape
+        assert dones.shape == rewards.shape
+
+        qTarget = rewards + GAMMA * nextStateMaxActionValue * ( 1  - dones )
+
+        assert qTarget.shape == qActionValues.shape
 
         loss = self._lossFunction(qActionValues, qTarget)
         self._optimizer.zero_grad()
@@ -112,11 +130,14 @@ class DeepQNetwork:
         self._optimizer.step()
 
     def _copyEvalautionWeightsToTarget(self):
-        self._targetNet.load_state_dict(self._evaluationNet.state_dict())
+        self._targetNet.load_state_dict(self._evaluationNet.state_dict(), strict=True)
 
     def _sampleExperience(self, batchSize):
         states, actionIndexes, rewards, dones, nextStates = self._experienceReplay.sample(batchSize)
         return states, actionIndexes, rewards, dones, nextStates
+
+    def getEpsilon(self):
+        return self._epsilon
 
 class DQNMarketMaker:
     """
@@ -135,3 +156,6 @@ class DQNMarketMaker:
     def inputPostTrade(self, state, actionIndex, reward, done, nextState):
         self._deepQNetwork.storeExperience(state, actionIndex, reward, done, nextState)
         self._deepQNetwork.learn()
+
+    def getEpsilon(self):
+        return self._deepQNetwork.getEpsilon()

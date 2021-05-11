@@ -28,8 +28,11 @@ class ExperienceReplay:
         # Can we be more compute efficient here?
         states = torch.FloatTensor(states)
         actionIndexes = torch.LongTensor(actionIndexes).unsqueeze(-1)
-        rewards = torch.FloatTensor(rewards)
-        dones = torch.LongTensor(dones)
+        rewards = torch.FloatTensor(rewards).unsqueeze(-1)
+        dones = torch.LongTensor(dones).unsqueeze(-1)
         nextStates = torch.FloatTensor(nextStates)
+
+        assert dones.shape == rewards.shape
+        assert actionIndexes.shape == rewards.shape
 
         return states, actionIndexes, rewards, dones, nextStates
