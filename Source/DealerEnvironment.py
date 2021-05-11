@@ -5,7 +5,7 @@ import numpy as np
 MINIMUM_SKEW = -1.0
 MAXIMUM_SKEW = 1.0
 
-BID_OFFER_WIDTH = 10.0
+BID_OFFER_WIDTH = 2.0
 
 MINIMUM_PRICE = 0.0
 MINIMUM_INVENTORY = -10
@@ -13,12 +13,16 @@ MAXIMUM_INVENTORY = 10
 
 INVENTORY_STEP_SIZE = 1.0
 
+ALPHA_PENALTY = 0.001
+
+INVENTORY_LIMIT = 20
+
 class DealerEnvironment(gym.Env):
     """
     Environment which a single dealer agent interacts with
 
     action_space : skew value in [-1, 1]
-    observation_space : (currentInventory, currentMid)
+    observation_space : (currentInventory, currentMid, tradeWon)
     """
     def __init__(self, dealerId, exchange):
         super(DealerEnvironment, self).__init__()
@@ -26,7 +30,6 @@ class DealerEnvironment(gym.Env):
         self.observation_space = spaces.Box(low=np.array([MINIMUM_INVENTORY, MINIMUM_PRICE]), high=np.array([MAXIMUM_INVENTORY, np.inf]), dtype=np.float32)
         self._dealerId = dealerId
         self._exchange = exchange
-        self.reset()
 
     def submitPricesToExchange(self, bid, ask):
         self._exchange.submitDealerOrder(bid, ask, self._dealerId)
@@ -35,18 +38,30 @@ class DealerEnvironment(gym.Env):
         latestMid = self._previousMid
         bid = latestMid - BID_OFFER_WIDTH * ( 1 - skew ) / 2.0
         ask = bid + BID_OFFER_WIDTH
+
+        # Limit to inventory - Have to be super competitive other side if too high
+        if self._inventory >= INVENTORY_LIMIT:
+            ask = latestMid - BID_OFFER_WIDTH
+        if self._inventory <= INVENTORY_LIMIT * -1:
+            bid = latestMid + BID_OFFER_WIDTH
+
         self.submitPricesToExchange(bid, ask)
 
     def step(self):
         exchangeObservation = self._exchange.getPostTradeInformation(self._dealerId)
 
-        mid = exchangeObservation.getMid()
-        clientDirection = exchangeObservation.getClientDirection()
-        winningPrice = exchangeObservation.getWinningPrice()
-        wonTrade = exchangeObservation.wasTradeWon()
-        done = exchangeObservation.hasEpisodeFinished()
+        mid = exchangeObservation.mid
+        clientDirection = exchangeObservation.clientDirection
+        winningPrice = exchangeObservation.winningPrice
+        wonTrade = exchangeObservation.tradeWon
+        done = exchangeObservation.episodeFinished
 
         reward = self._getInventoryPnl(mid)
+
+        inventoryPnl = reward
+
+        #Penalising money made by holding inventory
+        reward -= ALPHA_PENALTY * np.min(inventoryPnl, 0)
 
         if wonTrade:
             self._updateInventory(clientDirection)
@@ -54,13 +69,16 @@ class DealerEnvironment(gym.Env):
 
         self._updatePreviousMid(mid)
 
-        observation = (self._inventory, mid)
+        observation = (self._inventory, mid, int(wonTrade))
 
         return observation, reward, done, {}
 
     def reset(self):
         self._inventory = 0.0
         self._previousMid = self._exchange.getInitialPrice()
+        initialObservation = (self._inventory, self._previousMid, 0)
+
+        return initialObservation
 
     def render(self):
         pass
@@ -74,6 +92,8 @@ class DealerEnvironment(gym.Env):
             return INVENTORY_STEP_SIZE * (winningPrice - mid)
         elif clientDirection == 'clientSells':
             return INVENTORY_STEP_SIZE * (mid - winningPrice)
+        else:
+            raise KeyError("Invalid clientDirection")
 
     def _updateInventory(self, clientDirection):
         if clientDirection == 'clientBuys':

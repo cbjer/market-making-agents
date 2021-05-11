@@ -13,18 +13,14 @@ class OrderBook:
         self._orderIds.append(dealerId)
 
     def getHighestBid(self):
-        self._checkValidOrderbook()
-        orders = np.array(self._orders)
-        bids = orders[:, 0]
+        bids, _ = self._getBidsAsks()
         bestBidRow = bids.argmax()
         bestBid = bids[bestBidRow]
         dealerId = self._orderIds[bestBidRow]
         return bestBid, dealerId
 
     def getLowestOffer(self):
-        self._checkValidOrderbook()
-        orders = np.array(self._orders)
-        asks = orders[:, 1]
+        _, asks = self._getBidsAsks()
         bestAskRow = asks.argmin()
         bestAsk = asks[bestAskRow]
         dealerId = self._orderIds[bestAskRow]
@@ -34,6 +30,13 @@ class OrderBook:
         bestBid, _ = self.getHighestBid()
         bestAsk, _ = self.getLowestOffer()
         return np.average([bestBid, bestAsk])
+
+    def _getBidsAsks(self):
+        self._checkValidOrderbook()
+        orders = np.array(self._orders)
+        bids = orders[:, 0]
+        asks = orders[:, 1]
+        return bids, asks
 
     def _checkValidOrderbook(self):
         if len(self._orderIds) == 0:

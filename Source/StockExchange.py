@@ -3,37 +3,12 @@ from Source.OrderArrivalProcess import OrderArrivalProcess
 from Source.StockPriceProcess import StockPriceProcess
 
 import numpy as np
+from collections import namedtuple
 
 ARRIVAL_INTENSITY = 0.1
 PRICE_DRIFT = 0.0
 PRICE_VOL = 0.05 / np.sqrt(252)
 INITIAL_PRICE = 100.0
-
-class ExchangeObservation:
-    """
-    Information received back to dealer
-    """
-    def __init__(self, mid, clientDirection, winningPrice, tradeWon, episodeFinished):
-        self._mid = mid
-        self._clientDirection = clientDirection
-        self._winningPrice = winningPrice
-        self._tradeWon = tradeWon
-        self._episodeFinished = episodeFinished
-
-    def getMid(self):
-        return self._mid
-
-    def getClientDirection(self):
-        return self._clientDirection
-
-    def getWinningPrice(self):
-        return self._winningPrice
-
-    def wasTradeWon(self):
-        return self._tradeWon
-
-    def hasEpisodeFinished(self):
-        return self._episodeFinished
 
 class StockExchange:
     """
@@ -45,6 +20,7 @@ class StockExchange:
         self._orderArrivalProcess = OrderArrivalProcess(totalSteps, ARRIVAL_INTENSITY)
         self._totalSteps = totalSteps
         self._clearPreviousWonTrade()
+        self._experienceFactory = namedtuple("ExchangeObservation", ['mid', 'clientDirection', 'winningPrice', 'tradeWon', 'episodeFinished'])
 
     def reset(self):
         self._stepNumber = 0
@@ -56,7 +32,7 @@ class StockExchange:
     def getInitialPrice(self):
         return self._stockPriceProcess.getPrice(stepNumber=0)
 
-    def getPostTradeInformation(self, dealerId) -> ExchangeObservation:
+    def getPostTradeInformation(self, dealerId):
 
         if dealerId in self._previousWonTrade:
             tradePrice = self._previousWonTrade[dealerId]['tradePrice']
@@ -69,7 +45,7 @@ class StockExchange:
 
         episodeDone = not self.isEpisodeLive()
 
-        return ExchangeObservation(self._currentMid, clientDirection, tradePrice, tradeWon, episodeDone)
+        return self._experienceFactory(self._currentMid, clientDirection, tradePrice, tradeWon, episodeDone)
 
     def submitDealerOrder(self, bid, ask, dealerId):
         self._orderBook.addOrder(bid, ask, dealerId)
@@ -84,6 +60,7 @@ class StockExchange:
         self._clearPreviousWonTrade()
 
         if isNewOrder:
+            #clientOrder = self._generateInformedInvestorNewOrder(self._currentMid, self._orderBook.getMidPrice())
             clientOrder = self._generateNewOrder()
         else:
             self._orderBook.reset()
@@ -102,9 +79,18 @@ class StockExchange:
         return
 
     def _generateNewOrder(self):
-        coinFlip = np.random.random_integers(0, 2)
+        """
+        Probability of selecting each side equal
+        :return:
+        """
+        coinFlip = np.random.random_integers(0, 1)
 
         if coinFlip == 1:
+            return 'clientBuys'
+        return 'clientSells'
+
+    def _generateInformedInvestorNewOrder(self, trueMid, orderBookMid):
+        if trueMid > orderBookMid:
             return 'clientBuys'
         return 'clientSells'
 

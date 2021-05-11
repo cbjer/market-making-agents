@@ -18,6 +18,8 @@ class OrderArrivalProcess:
                 break
             self._arrivals[entry] = 1
 
+        self._arrivals[0] = 0
+
         return
 
     def checkIfOrderArrived(self, stepNumber):
