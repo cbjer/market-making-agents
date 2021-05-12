@@ -21,11 +21,12 @@ class Net(torch.nn.Module):
     """
     Neural network representation used for the 2 value functions
     """
-    def __init__(self, inputSpaceSize, outputSpaceSize):
+    def __init__(self, inputSpaceSize, outputSpaceSize, device):
         super(Net, self).__init__()
 
         self.inputSpaceSize = inputSpaceSize
         self.outputSpaceSize = outputSpaceSize
+        self.device = device
 
         # self.createNetwork()
         self.createSequentialNetwork()
@@ -44,6 +45,8 @@ class Net(torch.nn.Module):
                 torch.nn.ReLU(),
                 torch.nn.Linear(hiddenNodes, self.outputSpaceSize)
                 )
+        if self.device == 'cuda':
+            self.networkArchitecture.cuda()
 
     def forward(self, x):
         """
@@ -62,17 +65,20 @@ class DeepQNetwork:
     Requires a discrete action space
     Inspired by Sweetice implementation
     """
-    def __init__(self, actionSpaceSize, stateSpaceSize):
+    def __init__(self, actionSpaceSize, stateSpaceSize, device):
         self._actionSpaceSize = actionSpaceSize
         self._stateSpaceSize = stateSpaceSize
         self._epsilon = EPSILON_START
         self._experienceReplay = ExperienceReplay(EXPERIENCE_REPLAY_SIZE)
-        self._evaluationNet = Net(self._stateSpaceSize, self._actionSpaceSize)
-        self._targetNet = Net(self._stateSpaceSize, self._actionSpaceSize)
+
+        self._evaluationNet = Net(self._stateSpaceSize, self._actionSpaceSize, device)
+        self._targetNet = Net(self._stateSpaceSize, self._actionSpaceSize, device)
+
         self._learnCounter = 0
         self._weightsTransferIntervals = WEIGHT_TRANSFER_INTERVALS
         self._optimizer = torch.optim.Adam(self._evaluationNet.parameters(), lr=LEARNING_RATE)
         self._lossFunction = torch.nn.MSELoss()
+        self._device = device
 
     def sampleEpsilonGreedyActionIndex(self, state):
         if np.random.random() < self._epsilon:
@@ -80,13 +86,13 @@ class DeepQNetwork:
         else:
             return self.sampleGreedyActionIndex(state)
 
+    @torch.no_grad()
     def sampleGreedyActionIndex(self, state):
-        with torch.no_grad():
-            state = torch.unsqueeze(torch.FloatTensor(state), 0)
-            actionValues = self._evaluationNet.forward(state)
-            maxAction = torch.max(actionValues, 1)
-            maxActionIndex = maxAction[1].data.numpy()
-        maxActionIndex = maxActionIndex[0] #returns as array, just want value
+        state = torch.unsqueeze(torch.FloatTensor(state), 0)
+        actionValues = self._evaluationNet.forward(state)
+        maxAction = torch.max(actionValues, 1)
+        maxActionIndex = maxAction[1].data.numpy()
+        maxActionIndex = maxActionIndex[0]
         return maxActionIndex
 
     def _sampleRandomActionIndex(self):
@@ -133,7 +139,7 @@ class DeepQNetwork:
         self._targetNet.load_state_dict(self._evaluationNet.state_dict(), strict=True)
 
     def _sampleExperience(self, batchSize):
-        states, actionIndexes, rewards, dones, nextStates = self._experienceReplay.sample(batchSize)
+        states, actionIndexes, rewards, dones, nextStates = self._experienceReplay.sample(batchSize, self._device)
         return states, actionIndexes, rewards, dones, nextStates
 
     def getEpsilon(self):
@@ -147,7 +153,12 @@ class DQNMarketMaker:
         self.actionSpace = actionSpace
         self.actionSpaceSize = len(actionSpace)
         self.stateSpaceSize = stateSpaceSize
-        self._deepQNetwork = DeepQNetwork(self.actionSpaceSize, self.stateSpaceSize)
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print("DQN using {}".format(device))
+
+        self._deepQNetwork = DeepQNetwork(self.actionSpaceSize, self.stateSpaceSize, device=device)
+
 
     def getSkewAction(self, state):
         actionIndex = self._deepQNetwork.sampleEpsilonGreedyActionIndex(state)
