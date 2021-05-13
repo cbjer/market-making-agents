@@ -1,7 +1,5 @@
 """
 Requires a discrete actions space
-
-NOT CONVERGING YET
 """
 from Source.Agents.Utils.ExperienceReplay import ExperienceReplay
 
@@ -9,10 +7,10 @@ import torch
 import numpy as np
 
 LEARNING_RATE = 0.0005
-WEIGHT_TRANSFER_INTERVALS = 1000
+WEIGHT_TRANSFER_INTERVALS = 5000
 EXPERIENCE_REPLAY_SIZE = 5000
 EPSILON_START = 0.5
-EPSILON_ALPHA = 0.999
+EPSILON_ALPHA = 0.9999
 EPSILON_MINIMUM = 0.01
 BATCH_SIZE = 128
 GAMMA = 0.95
@@ -46,6 +44,7 @@ class Net(torch.nn.Module):
                 torch.nn.Linear(hiddenNodes, self.outputSpaceSize)
                 )
         if self.device == 'cuda':
+            print("Activating cuda for Net")
             self.networkArchitecture.cuda()
 
     def forward(self, x):
@@ -88,10 +87,10 @@ class DeepQNetwork:
 
     @torch.no_grad()
     def sampleGreedyActionIndex(self, state):
-        state = torch.unsqueeze(torch.FloatTensor(state), 0)
+        state = torch.unsqueeze(torch.FloatTensor(state).to(self._device), 0)
         actionValues = self._evaluationNet.forward(state)
         maxAction = torch.max(actionValues, 1)
-        maxActionIndex = maxAction[1].data.numpy()
+        maxActionIndex = maxAction[1].cpu().data.numpy()
         maxActionIndex = maxActionIndex[0]
         return maxActionIndex
 

@@ -5,9 +5,9 @@ from Source.StockPriceProcess import StockPriceProcess
 import numpy as np
 from collections import namedtuple
 
-ARRIVAL_INTENSITY = 0.1
+ARRIVAL_INTENSITY = 0.2
 PRICE_DRIFT = 0.0
-PRICE_VOL = 0.05 / np.sqrt(252)
+PRICE_VOL = 0.01 / np.sqrt(252)
 INITIAL_PRICE = 100.0
 
 class StockExchange:

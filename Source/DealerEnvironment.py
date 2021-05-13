@@ -2,6 +2,8 @@ import gym
 from gym import spaces
 import numpy as np
 
+from collections import namedtuple
+
 MINIMUM_SKEW = -1.0
 MAXIMUM_SKEW = 1.0
 
@@ -13,9 +15,9 @@ MAXIMUM_INVENTORY = 10
 
 INVENTORY_STEP_SIZE = 1.0
 
-ALPHA_PENALTY = 0.001
+ALPHA_PENALTY = 0.05
 
-INVENTORY_LIMIT = 20
+Observation = namedtuple('Observation', ['inventory'])
 
 class DealerEnvironment(gym.Env):
     """
@@ -40,9 +42,9 @@ class DealerEnvironment(gym.Env):
         ask = bid + BID_OFFER_WIDTH
 
         # Limit to inventory - Have to be super competitive other side if too high
-        if self._inventory >= INVENTORY_LIMIT:
+        if self._inventory >= MAXIMUM_INVENTORY:
             ask = latestMid - BID_OFFER_WIDTH
-        if self._inventory <= INVENTORY_LIMIT * -1:
+        if self._inventory <= MINIMUM_INVENTORY:
             bid = latestMid + BID_OFFER_WIDTH
 
         self.submitPricesToExchange(bid, ask)
@@ -69,14 +71,14 @@ class DealerEnvironment(gym.Env):
 
         self._updatePreviousMid(mid)
 
-        observation = (self._inventory, mid, int(wonTrade))
+        observation = Observation(self._inventory)
 
         return observation, reward, done, {}
 
     def reset(self):
         self._inventory = 0.0
-        self._previousMid = self._exchange.getInitialPrice()
-        initialObservation = (self._inventory, self._previousMid, 0)
+        #self._previousMid = self._exchange.getInitialPrice()
+        initialObservation = Observation(self._inventory)
 
         return initialObservation
 

@@ -8,27 +8,33 @@ class RandomAgent:
     def getSkewAction(self, state):
         return np.random.uniform(self.low, self.high), None
 
-    def inputPostTrade(self):
-        pass
-
 class RecycleAgent:
     def __init__(self, offset):
         self.offset = offset
 
     def getSkewAction(self, state):
-        inventory = state[0]
+        inventory = state.inventory
 
         if inventory == 0:
             skew = 0.0
         elif inventory < 0:
+            # Agent needs to buy -> high bid -> positive skew
             skew = self.offset
         else:
+            # Agent needs to sell -> low offer -> negative skew
             skew = self.offset * -1.0
 
         return skew, None
 
-    def inputPostTrade(self):
+class ImprovedRecycleAgent:
+    def __init__(self):
         pass
+
+    def getSkewAction(self, state):
+        inventory = state.inventory
+        skew = (inventory / 10.0) * -1.0
+        return np.max([-1.0, np.min([skew, 1.0])])
+
 
 
 
