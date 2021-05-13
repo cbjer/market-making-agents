@@ -77,7 +77,7 @@ class DealerEnvironment(gym.Env):
 
     def reset(self):
         self._inventory = 0.0
-        #self._previousMid = self._exchange.getInitialPrice()
+        self._previousMid = self._exchange.getInitialPrice()
         initialObservation = Observation(self._inventory)
 
         return initialObservation

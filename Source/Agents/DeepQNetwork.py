@@ -158,8 +158,8 @@ class DQNMarketMaker:
 
         self._deepQNetwork = DeepQNetwork(self.actionSpaceSize, self.stateSpaceSize, device=device)
 
-
     def getSkewAction(self, state):
+        state = list(state)
         actionIndex = self._deepQNetwork.sampleEpsilonGreedyActionIndex(state)
         return self.actionSpace[actionIndex], actionIndex
 
