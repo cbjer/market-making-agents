@@ -17,7 +17,7 @@ INVENTORY_STEP_SIZE = 1.0
 
 ALPHA_PENALTY = 0.05
 
-Observation = namedtuple('Observation', ['inventory'])
+Observation = namedtuple('Observation', ['inventory', 'tradeLost'])
 
 class DealerEnvironment(gym.Env):
     """
@@ -57,6 +57,7 @@ class DealerEnvironment(gym.Env):
         winningPrice = exchangeObservation.winningPrice
         wonTrade = exchangeObservation.tradeWon
         done = exchangeObservation.episodeFinished
+        tradeLost = int(exchangeObservation.tradeLost)
 
         reward = self._getInventoryPnl(mid)
 
@@ -71,14 +72,15 @@ class DealerEnvironment(gym.Env):
 
         self._updatePreviousMid(mid)
 
-        observation = Observation(self._inventory)
+        observation = Observation(self._inventory, tradeLost)
 
         return observation, reward, done, {}
 
     def reset(self):
         self._inventory = 0.0
         self._previousMid = self._exchange.getInitialPrice()
-        initialObservation = Observation(self._inventory)
+        tradeLost = int(False)
+        initialObservation = Observation(self._inventory, tradeLost)
 
         return initialObservation
 

@@ -10,6 +10,8 @@ PRICE_DRIFT = 0.0
 PRICE_VOL = 0.01 / np.sqrt(252)
 INITIAL_PRICE = 100.0
 
+ExchangeObservation = namedtuple("ExchangeObservation", ['mid', 'clientDirection', 'winningPrice', 'tradeWon', 'episodeFinished', 'tradeLost'])
+
 class StockExchange:
     """
     Interface agents submit their prices to and retrieve back information about trade outcome
@@ -19,15 +21,14 @@ class StockExchange:
         self._stockPriceProcess = StockPriceProcess(totalSteps, PRICE_DRIFT, PRICE_VOL, INITIAL_PRICE)
         self._orderArrivalProcess = OrderArrivalProcess(totalSteps, ARRIVAL_INTENSITY)
         self._totalSteps = totalSteps
-        self._clearPreviousWonTrade()
-        self._experienceFactory = namedtuple("ExchangeObservation", ['mid', 'clientDirection', 'winningPrice', 'tradeWon', 'episodeFinished'])
+        self._previousWonTrade = {}
 
     def reset(self):
         self._stepNumber = 0
         self._orderBook.reset()
         self._orderArrivalProcess.reset()
         self._stockPriceProcess.reset()
-        self._clearPreviousWonTrade() # {dealerId : {'tradePrice' : tradePrice, 'clientDirection' : clientDirection}}
+        self._previousWonTrade = {} # {dealerId : {'tradePrice' : tradePrice, 'clientDirection' : clientDirection}}
 
     def getInitialPrice(self):
         return self._stockPriceProcess.getPrice(stepNumber=0)
@@ -38,14 +39,23 @@ class StockExchange:
             tradePrice = self._previousWonTrade[dealerId]['tradePrice']
             clientDirection = self._previousWonTrade[dealerId]['clientDirection']
             tradeWon = True
+            tradeLost = False
+
+        elif len(self._previousWonTrade) > 0:
+            tradePrice = None
+            clientDirection = None
+            tradeWon = False
+            tradeLost = True
         else:
             tradePrice = None
             clientDirection = None
             tradeWon = False
+            tradeLost = False
+
 
         episodeDone = not self.isEpisodeLive()
 
-        return self._experienceFactory(self._currentMid, clientDirection, tradePrice, tradeWon, episodeDone)
+        return ExchangeObservation(self._currentMid, clientDirection, tradePrice, tradeWon, episodeDone, tradeLost)
 
     def submitDealerOrder(self, bid, ask, dealerId):
         self._orderBook.addOrder(bid, ask, dealerId)
@@ -60,8 +70,7 @@ class StockExchange:
         self._clearPreviousWonTrade()
 
         if isNewOrder:
-            #clientOrder = self._generateInformedInvestorNewOrder(self._currentMid, self._orderBook.getMidPrice())
-            clientOrder = self._generateNewOrder()
+            clientOrder = self._generateInformedRandomNewOrder(self._currentMid, self._orderBook.getMidPrice())
         else:
             self._orderBook.reset()
             self._stepNumber += 1
@@ -79,10 +88,6 @@ class StockExchange:
         return
 
     def _generateNewOrder(self):
-        """
-        Probability of selecting each side equal
-        :return:
-        """
         coinFlip = np.random.random_integers(0, 1)
 
         if coinFlip == 1:
@@ -94,7 +99,16 @@ class StockExchange:
             return 'clientBuys'
         return 'clientSells'
 
+    def _generateInformedRandomNewOrder(self, trueMid, orderBookMid):
+        coinFlip = np.random.random_integers(0, 4)
+
+        if coinFlip == 0:
+            return self._generateInformedInvestorNewOrder(trueMid, orderBookMid)
+        else:
+            return self._generateNewOrder()
+
     def _clearPreviousWonTrade(self):
+        assert len(self._previousWonTrade) <= 1
         self._previousWonTrade = {}
 
     def isEpisodeLive(self):
@@ -102,9 +116,3 @@ class StockExchange:
 
     def _addPreviousWonTrade(self, dealerId, tradePrice, clientDirection):
         self._previousWonTrade = {dealerId : {'tradePrice' : tradePrice, 'clientDirection' : clientDirection}}
-
-
-
-
-
-

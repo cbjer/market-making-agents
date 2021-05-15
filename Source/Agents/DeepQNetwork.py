@@ -15,16 +15,15 @@ EPSILON_MINIMUM = 0.01
 BATCH_SIZE = 128
 GAMMA = 0.95
 
-class Net(torch.nn.Module):
+class DeepQNetwork(torch.nn.Module):
     """
     Neural network representation used for the 2 value functions
     """
     def __init__(self, inputSpaceSize, outputSpaceSize, device):
-        super(Net, self).__init__()
+        super(DeepQNetwork, self).__init__()
 
         self.inputSpaceSize = inputSpaceSize
         self.outputSpaceSize = outputSpaceSize
-        self.device = device
 
         # self.createNetwork()
         self.createSequentialNetwork()
@@ -36,6 +35,7 @@ class Net(torch.nn.Module):
 
     def createSequentialNetwork(self):
         hiddenNodes = 128
+
         self.networkArchitecture = torch.nn.Sequential(
                 torch.nn.Linear(self.inputSpaceSize, hiddenNodes),
                 torch.nn.ReLU(),
@@ -43,22 +43,12 @@ class Net(torch.nn.Module):
                 torch.nn.ReLU(),
                 torch.nn.Linear(hiddenNodes, self.outputSpaceSize)
                 )
-        if self.device == 'cuda':
-            print("Activating cuda for Net")
-            self.networkArchitecture.cuda()
 
     def forward(self, x):
-        """
-        x = self.inputLayer(x)
-        x = torch.nn.functional.relu(x)
-        x = self.fullConnected1(x)
-        x = torch.nn.functional.relu(x)
-        output = self.outputLayer(x)
-        """
         output = self.networkArchitecture(x)
         return output
 
-class DeepQNetwork:
+class DeepQLearning:
     """
     Replica of Deepmind's DQN structure
     Requires a discrete action space
@@ -70,8 +60,8 @@ class DeepQNetwork:
         self._epsilon = EPSILON_START
         self._experienceReplay = ExperienceReplay(EXPERIENCE_REPLAY_SIZE)
 
-        self._evaluationNet = Net(self._stateSpaceSize, self._actionSpaceSize, device)
-        self._targetNet = Net(self._stateSpaceSize, self._actionSpaceSize, device)
+        self._evaluationNet = DeepQNetwork(self._stateSpaceSize, self._actionSpaceSize, device).to(device)
+        self._targetNet = DeepQNetwork(self._stateSpaceSize, self._actionSpaceSize, device).to(device)
 
         self._learnCounter = 0
         self._weightsTransferIntervals = WEIGHT_TRANSFER_INTERVALS
@@ -88,10 +78,15 @@ class DeepQNetwork:
     @torch.no_grad()
     def sampleGreedyActionIndex(self, state):
         state = torch.unsqueeze(torch.FloatTensor(state).to(self._device), 0)
-        actionValues = self._evaluationNet.forward(state)
+        self._evaluationNet.eval()
+        actionValues = self._evaluationNet(state)
+        self._evaluationNet.train()
         maxAction = torch.max(actionValues, 1)
         maxActionIndex = maxAction[1].cpu().data.numpy()
+
+        assert len(maxActionIndex) == 1
         maxActionIndex = maxActionIndex[0]
+
         return maxActionIndex
 
     def _sampleRandomActionIndex(self):
@@ -102,7 +97,7 @@ class DeepQNetwork:
         self._experienceReplay.addExperience(state, actionIndex, reward, done, nextState)
 
     def learn(self, batchSize=BATCH_SIZE):
-        if batchSize > len(self._experienceReplay):
+        if not self._experienceReplay.isReadyForSampling(batchSize):
             return
 
         if self._learnCounter % self._weightsTransferIntervals == 0:
@@ -112,9 +107,17 @@ class DeepQNetwork:
         self._learnCounter += 1
         self._epsilon = np.max([EPSILON_ALPHA * self._epsilon, EPSILON_MINIMUM])
 
-        states, actionIndexes, rewards, dones, nextStates = self._sampleExperience(batchSize)
+        currentActionValues, targetActionValues = self._getCurrentAndTargetQValues(batchSize)
 
+        self._applyOptimisationStep(currentActionValues, targetActionValues)
+
+    def _getCurrentAndTargetQValues(self, batchSize):
+        states, actionIndexes, rewards, dones, nextStates = self._sampleExperience(batchSize, self._device)
+
+        # Current Q Values
         qActionValues = self._evaluationNet(states).gather(1, actionIndexes)
+
+        # Target Q Values
         nextStateQValues = self._targetNet(nextStates).detach()
         nextStateMaxActionValue = nextStateQValues.max(1)[0].view(batchSize, 1)
 
@@ -125,7 +128,25 @@ class DeepQNetwork:
 
         assert qTarget.shape == qActionValues.shape
 
-        loss = self._lossFunction(qActionValues, qTarget)
+        return qActionValues, qTarget
+
+    def _sampleExperience(self, batchSize, device):
+        states, actionIndexes, rewards, dones, nextStates = self._experienceReplay.sample(batchSize)
+
+        # Can we be more compute efficient here?
+        states = torch.FloatTensor(states).to(device)
+        actionIndexes = torch.LongTensor(actionIndexes).unsqueeze(-1).to(device)
+        rewards = torch.FloatTensor(rewards).unsqueeze(-1).to(device)
+        dones = torch.LongTensor(dones).unsqueeze(-1).to(device)
+        nextStates = torch.FloatTensor(nextStates).to(device)
+
+        assert dones.shape == rewards.shape
+        assert actionIndexes.shape == rewards.shape
+
+        return states, actionIndexes, rewards, dones, nextStates
+
+    def _applyOptimisationStep(self, estimates, targets):
+        loss = self._lossFunction(estimates, targets)
         self._optimizer.zero_grad()
         loss.backward()
 
@@ -137,10 +158,6 @@ class DeepQNetwork:
     def _copyEvalautionWeightsToTarget(self):
         self._targetNet.load_state_dict(self._evaluationNet.state_dict(), strict=True)
 
-    def _sampleExperience(self, batchSize):
-        states, actionIndexes, rewards, dones, nextStates = self._experienceReplay.sample(batchSize, self._device)
-        return states, actionIndexes, rewards, dones, nextStates
-
     def getEpsilon(self):
         return self._epsilon
 
@@ -148,22 +165,30 @@ class DQNMarketMaker:
     """
     Specific for the market making environment
     """
-    def __init__(self, actionSpace, stateSpaceSize):
+    def __init__(self, actionSpace, stateSpaceSize, name):
         self.actionSpace = actionSpace
         self.actionSpaceSize = len(actionSpace)
         self.stateSpaceSize = stateSpaceSize
+        self._name = name
+
+        self._actionToActionIndexMap = {self.actionSpace[i] : i for i in range(self.actionSpaceSize)}
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print("DQN using {}".format(device))
 
-        self._deepQNetwork = DeepQNetwork(self.actionSpaceSize, self.stateSpaceSize, device=device)
+        self._deepQNetwork = DeepQLearning(self.actionSpaceSize, self.stateSpaceSize, device=device)
+
+    def __str__(self):
+        return self._name
 
     def getSkewAction(self, state):
         state = list(state)
         actionIndex = self._deepQNetwork.sampleEpsilonGreedyActionIndex(state)
-        return self.actionSpace[actionIndex], actionIndex
 
-    def inputPostTrade(self, state, actionIndex, reward, done, nextState):
+        return self.actionSpace[actionIndex]
+
+    def inputPostTrade(self, state, action, reward, done, nextState):
+        actionIndex = self._actionToActionIndexMap[action]
         self._deepQNetwork.storeExperience(state, actionIndex, reward, done, nextState)
         self._deepQNetwork.learn()
 
