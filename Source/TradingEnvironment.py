@@ -34,9 +34,6 @@ class TradingEnvironment:
         if len(self._listNames) != len(np.unique(self._listNames)):
             raise NameError("Dealers have non unique names")
 
-
-
-
     def trade(self, totalEpisodes):
         for episodeNumber in range(totalEpisodes):
             self._stockExchange.reset()
@@ -44,6 +41,8 @@ class TradingEnvironment:
             states = [env.reset() for env in self._dealerEnvironments]
 
             dealerReturns = [0.0] * self._numberAgents
+            dealerTradesWon = [0] * self._numberAgents
+            dealerTradesRecycled = [0] * self._numberAgents
 
             dealerSkews = [ [] for i in range(self._numberAgents)]
             dealerInventories = [ [state.inventory] for state in states]
@@ -70,6 +69,10 @@ class TradingEnvironment:
                     self._listAgents[i].inputPostTrade(state, action, reward, done, nextState)
 
                     dealerReturns[i] += reward
+                    tradeWon = 1 if state.inventory != nextState.inventory else 0
+                    tradeRecycled = 1 if np.abs(state.inventory) > np.abs(nextState.inventory) else 0
+                    dealerTradesWon[i] += tradeWon
+                    dealerTradesRecycled[i] += tradeRecycled
                     dealerInventories[i].append(nextState.inventory)
 
                 states = nextStates
@@ -79,12 +82,18 @@ class TradingEnvironment:
             for i in range(self._numberAgents):
                 writer = self._listWriters[i]
                 name = self._listNames[i]
+
                 dealerReturn = dealerReturns[i]
+                tradesWon = dealerTradesWon[i]
+                tradesRecycled = dealerTradesRecycled[i]
                 meanInventory = np.mean(dealerInventories[i])
+
                 writer.add_scalar("return", dealerReturn, episodeNumber)
                 writer.add_scalar("inventory", meanInventory, episodeNumber)
+                writer.add_scalar("tradesWon", tradesWon, episodeNumber)
+                writer.add_scalar("tradesRecycled", tradesRecycled, episodeNumber)
 
-                print("Dealer: {}, Return: {}".format(name, dealerReturn))
+                print("Dealer: {}, Return: {}, TradesWon: {}".format(name, dealerReturn, tradesWon))
 
         print("End of trading")
         return

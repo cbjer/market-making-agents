@@ -2,6 +2,9 @@
 Requires a discrete actions space
 """
 from Source.Agents.Utils.ExperienceReplay import ExperienceReplay
+from Source.Agents.PytorchModels import DeepQNetwork
+
+import Source.Agents.AgentConstructionUtils as AgentUtils
 
 import torch
 import numpy as np
@@ -14,39 +17,6 @@ EPSILON_ALPHA = 0.9999
 EPSILON_MINIMUM = 0.01
 BATCH_SIZE = 128
 GAMMA = 0.95
-
-class DeepQNetwork(torch.nn.Module):
-    """
-    Neural network representation used for the 2 value functions
-    """
-    def __init__(self, inputSpaceSize, outputSpaceSize, device):
-        super(DeepQNetwork, self).__init__()
-
-        self.inputSpaceSize = inputSpaceSize
-        self.outputSpaceSize = outputSpaceSize
-
-        # self.createNetwork()
-        self.createSequentialNetwork()
-
-    def createNetwork(self):
-        self.inputLayer = torch.nn.Linear(self.inputSpaceSize, 128) # Can add weight initialisation later
-        self.fullConnected1 = torch.nn.Linear(128, 128)
-        self.outputLayer = torch.nn.Linear(128, self.outputSpaceSize)
-
-    def createSequentialNetwork(self):
-        hiddenNodes = 128
-
-        self.networkArchitecture = torch.nn.Sequential(
-                torch.nn.Linear(self.inputSpaceSize, hiddenNodes),
-                torch.nn.ReLU(),
-                torch.nn.Linear(hiddenNodes, hiddenNodes),
-                torch.nn.ReLU(),
-                torch.nn.Linear(hiddenNodes, self.outputSpaceSize)
-                )
-
-    def forward(self, x):
-        output = self.networkArchitecture(x)
-        return output
 
 class DeepQLearning:
     """
@@ -112,7 +82,9 @@ class DeepQLearning:
         self._applyOptimisationStep(currentActionValues, targetActionValues)
 
     def _getCurrentAndTargetQValues(self, batchSize):
-        states, actionIndexes, rewards, dones, nextStates = self._sampleExperience(batchSize, self._device)
+        states, actionIndexes, rewards, dones, nextStates = AgentUtils.sampleExperience(self._experienceReplay, batchSize, self._device)
+
+        actionIndexes = torch.LongTensor(actionIndexes).unsqueeze(-1).to(self._device)
 
         # Current Q Values
         qActionValues = self._evaluationNet(states).gather(1, actionIndexes)
@@ -129,21 +101,6 @@ class DeepQLearning:
         assert qTarget.shape == qActionValues.shape
 
         return qActionValues, qTarget
-
-    def _sampleExperience(self, batchSize, device):
-        states, actionIndexes, rewards, dones, nextStates = self._experienceReplay.sample(batchSize)
-
-        # Can we be more compute efficient here?
-        states = torch.FloatTensor(states).to(device)
-        actionIndexes = torch.LongTensor(actionIndexes).unsqueeze(-1).to(device)
-        rewards = torch.FloatTensor(rewards).unsqueeze(-1).to(device)
-        dones = torch.LongTensor(dones).unsqueeze(-1).to(device)
-        nextStates = torch.FloatTensor(nextStates).to(device)
-
-        assert dones.shape == rewards.shape
-        assert actionIndexes.shape == rewards.shape
-
-        return states, actionIndexes, rewards, dones, nextStates
 
     def _applyOptimisationStep(self, estimates, targets):
         loss = self._lossFunction(estimates, targets)

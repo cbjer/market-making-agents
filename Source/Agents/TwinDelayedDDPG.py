@@ -1,5 +1,6 @@
 """
-Deep Deterministic Policy Gradient (DDPG) - Used for continuous control
+Implementation of the TD3 Algorithm
+Twin Delayed Deep Deterministic Policy Gradient
 """
 
 import torch
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from Source.Agents.Utils.ExperienceReplay import ExperienceReplay
-from Source.Agents.PytorchModels import ActorNetwork, CriticNetwork
+from Source.Agents.PytorchModels import ActorNetwork, TwinCriticNetwork
 import Source.Agents.AgentConstructionUtils as AgentUtils
 
 # Parameters
@@ -22,9 +23,15 @@ NOISE_START = 1.0
 NOISE_DECAY = 0.99999
 NOISE_MIN = 0.02
 
-class DeepDeterministicPolicyGradient:
+POLICY_NOISE = 0.2
+NOISE_CLIP = 0.5
+MIN_ACTION = -1.0
+MAX_ACTION = 1.0
+ACTOR_POLICY_UPDATE_FREQUENCY = 2
+
+class TwinDelayedDDPG:
     """
-    DDPG
+    AKA TD3
     """
     def __init__(self, stateDimensionSize, actionDimensionSize, device):
         self._stateDimensionSize = stateDimensionSize
@@ -34,14 +41,15 @@ class DeepDeterministicPolicyGradient:
         self._actorTargetNet = ActorNetwork(stateDimensionSize, actionDimensionSize).to(device)
         self._actorOptimizer = torch.optim.Adam(self._actorEvaluationNet.parameters(), lr=ACTOR_LEARNING_RATE)
 
-        self._criticEvaluationNet = CriticNetwork(stateDimensionSize, actionDimensionSize).to(device)
-        self._criticTargetNet = CriticNetwork(stateDimensionSize, actionDimensionSize).to(device)
+        self._criticEvaluationNet = TwinCriticNetwork(stateDimensionSize, actionDimensionSize).to(device)
+        self._criticTargetNet = TwinCriticNetwork(stateDimensionSize, actionDimensionSize).to(device)
         self._criticOptimizer = torch.optim.Adam(self._criticEvaluationNet.parameters(), lr=CRITIC_LEARNING_RATE)
 
         self._experienceReplay = ExperienceReplay(EXPERIENCE_REPLAY_SIZE)
         self._device = device
 
         self._noiseStd = NOISE_START
+        self._step = 1
 
     def storeExperience(self, state, action, reward, done, nextState):
         self._experienceReplay.addExperience(state, action, reward, done, nextState)
@@ -63,29 +71,43 @@ class DeepDeterministicPolicyGradient:
 
         return action
 
-    def learn(self, batchSize=BATCH_SIZE):
+    def learn(self, batchSize=BATCH_SIZE, policyNoise=POLICY_NOISE):
         if not self._experienceReplay.isReadyForSampling(batchSize):
             return
 
         states, actions, rewards, dones, nextStates = AgentUtils.sampleExperience(self._experienceReplay, batchSize, self._device)
 
+        # Apply noise to the actions
+        noise = actions.data.normal_(0, policyNoise).to(self._device)
+        noise = noise.clamp(-NOISE_CLIP, NOISE_CLIP)
+        nextActions = (self._actorTargetNet(nextStates) + noise).clamp(MIN_ACTION, MAX_ACTION)
+
         # Update critic
-        nextActions = self._actorTargetNet(nextStates)
-        qTargetNexts = self._criticTargetNet(nextStates, nextActions)
+        qTargetNexts1, qTargetNexts2 = self._criticTargetNet(nextStates, nextActions)
+        qTargetNexts = torch.min(qTargetNexts1, qTargetNexts2)
 
         assert qTargetNexts.shape == rewards.shape
         assert dones.shape == rewards.shape
 
         qTargets = rewards + (GAMMA * qTargetNexts * (1 - dones)).detach()
-        qExpected = self._criticEvaluationNet(states, actions)
-        criticLoss = F.smooth_l1_loss(qExpected, qTargets)
+        qExpected1, qExpected2 = self._criticEvaluationNet(states, actions)
+
+        criticLoss = F.smooth_l1_loss(qExpected1, qTargets) + F.smooth_l1_loss(qExpected2, qTargets)
+
         self._criticOptimizer.zero_grad()
         criticLoss.backward()
         self._criticOptimizer.step()
 
+        if self._step % ACTOR_POLICY_UPDATE_FREQUENCY == 0:
+            self._step = 1
+        else:
+            self._step += 1
+            return
+
         # Update actor
         actionsPredicted = self._actorEvaluationNet(states)
-        actorLoss = -1.0 * self._criticEvaluationNet(states, actionsPredicted).mean()
+        actorLoss = -1.0 * self._criticEvaluationNet.Q1(states, actionsPredicted).mean()
+
         self._actorOptimizer.zero_grad()
         actorLoss.backward()
         self._actorOptimizer.step()
@@ -99,15 +121,15 @@ class DeepDeterministicPolicyGradient:
         self._noiseStd = np.max([self._noiseStd * NOISE_DECAY, NOISE_MIN])
         return noise
 
-class DDPGMarketMaker:
+class TD3MarketMaker:
     """
     Overlay for market making
     """
     def __init__(self, actionSpaceDimension, stateSpaceDimension, name):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print("DDPG using {}".format(device))
+        print("TD3 using {}".format(device))
 
-        self._ddpgNetwork = DeepDeterministicPolicyGradient(stateSpaceDimension, actionSpaceDimension, device)
+        self._td3Network = TwinDelayedDDPG(stateSpaceDimension, actionSpaceDimension, device)
         self._name = name
 
     def __str__(self):
@@ -115,9 +137,9 @@ class DDPGMarketMaker:
 
     def getSkewAction(self, state):
         state = list(state)
-        action = self._ddpgNetwork.sampleAction(state)
+        action = self._td3Network.sampleAction(state)
         return action
 
     def inputPostTrade(self, state, action, reward, done, nextState):
-        self._ddpgNetwork.storeExperience(state, action, reward, done, nextState)
-        self._ddpgNetwork.learn()
+        self._td3Network.storeExperience(state, action, reward, done, nextState)
+        self._td3Network.learn()
